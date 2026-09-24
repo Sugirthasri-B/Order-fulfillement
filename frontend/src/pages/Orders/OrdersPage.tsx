@@ -8,9 +8,9 @@ import { OrdersTable } from './OrdersTable';
 
 const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: 'all', label: 'All statuses' },
-  { value: 'released', label: 'released' },
-  { value: 'partially released', label: 'partially released' },
-  { value: 'blocked', label: 'blocked' },
+  { value: 'Released', label: 'Released' },
+  { value: 'Partially Released', label: 'Partially Released' },
+  { value: 'Blocked', label: 'Blocked' },
 ];
 
 export const OrdersPage = () => {

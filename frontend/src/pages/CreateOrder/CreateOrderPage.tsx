@@ -193,9 +193,9 @@ export const CreateOrderPage = () => {
               </div>
             )}
             <div
-              className={`form-banner ${result.status === 'blocked' ? 'form-banner--error' : 'form-banner--success'}`}
+              className={`form-banner ${result.status === 'Blocked' ? 'form-banner--error' : 'form-banner--success'}`}
             >
-              {result.status === 'blocked'
+              {result.status === 'Blocked'
                 ? `Order ${result.orderId} was blocked.`
                 : `Order ${result.orderId} was submitted successfully.`}
             </div>

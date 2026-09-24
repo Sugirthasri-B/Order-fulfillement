@@ -2,6 +2,41 @@
 
 A single project containing the frontend, backend, and database components for the Order Fulfilment system.
 
+## Stage 2 / CHANGE1 — Priority Partial Release
+
+**What changed:** Priority customers may now combine inventory across `WH-A`, `WH-B`, `WH-C`
+(in that order) and be partially released when at least a configurable threshold (default
+**70%**) of the requested quantity is available; the remainder becomes an `Open` backorder.
+Standard customers are completely unchanged — full quantity from exactly one warehouse, or
+blocked. This also updates the API contract to the exact literal casing required for
+verification:
+
+| | Before (Stage 1) | Now (Stage 2 / CHANGE1) |
+|---|---|---|
+| Status values | `"released"` / `"partially released"` / `"blocked"` | `"Released"` / `"Partially Released"` / `"Blocked"` |
+| Backorder field | `backorderQuantity` | `backorderedQuantity` |
+| Allocation field | `allocation` (single object or `null`) | `allocations` (array, or `null` when blocked) |
+
+**New/changed database objects** (see `database/08_stage2_change1_priority_partial_release.sql`):
+- `OrdfulFulfilmentResults` gains `ReleasedQuantity` / `BackorderedQuantity` columns (persisted
+  directly, not just derived from allocations).
+- New `OrdfulBackorders` table — one `Open` row per partially released order's unfulfilled
+  balance.
+- `OrderStatus` / `Status` check constraints updated to the new exact literals.
+
+**Configuring the threshold:** `PRIORITY_PARTIAL_RELEASE_THRESHOLD_PERCENT` in `backend/.env`
+(integer percent, default `70`). Kept as an integer rather than a 0–1 fraction so the "exactly
+N% qualifies" boundary is checked with exact integer arithmetic
+(`releasedQuantity * 100 >= quantity * thresholdPercent`), never floating-point rounding.
+
+**Verification:** all 41 backend tests (17 unit + 24 integration) pass, including the exact
+spec example (100 units, WH-A=40 + WH-B=35 → Released 75 / Backordered 25 / Partially
+Released), the exact-70%-qualifies and just-below-70%-blocks boundary cases, full-release by
+combining warehouses, dispatch-date exclusion from the combine, idempotent duplicate handling
+(no duplicate allocations or backorder), and Standard-customer regression (never combines,
+Stage 1 behaviour preserved). See `tests/integration/orders.test.ts` describe block "Priority
+customers (Stage 2 / CHANGE1)" and `tests/unit/decidePriorityAllocation.test.ts`.
+
 ## Structure
 
 ```

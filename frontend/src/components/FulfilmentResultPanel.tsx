@@ -26,14 +26,16 @@ export const FulfilmentResultPanel = ({ result }: FulfilmentResultPanelProps) =>
       <span className="result-panel__value">{result.releasedQuantity.toLocaleString()}</span>
     </div>
     <div className="result-panel__row">
-      <span className="result-panel__label">Backorder Quantity</span>
-      <span className="result-panel__value">{result.backorderQuantity.toLocaleString()}</span>
+      <span className="result-panel__label">Backordered Quantity</span>
+      <span className="result-panel__value">{result.backorderedQuantity.toLocaleString()}</span>
     </div>
     <div className="result-panel__row">
-      <span className="result-panel__label">Allocation</span>
+      <span className="result-panel__label">Allocation{result.allocations && result.allocations.length > 1 ? 's' : ''}</span>
       <span className="result-panel__value">
-        {result.allocation
-          ? `${result.allocation.warehouseId} — ${result.allocation.allocatedQuantity.toLocaleString()} units`
+        {result.allocations && result.allocations.length > 0
+          ? result.allocations
+              .map((a) => `${a.warehouseId} — ${a.allocatedQuantity.toLocaleString()} units`)
+              .join(', ')
           : '—'}
       </span>
     </div>

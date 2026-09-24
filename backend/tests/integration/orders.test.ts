@@ -5,8 +5,10 @@ import {
   cleanupInventory,
   cleanupOrder,
   countAllocationsForOrder,
+  countBackordersForOrder,
   createTestCustomer,
   createTestInventory,
+  getBackorderForOrder,
   getInventoryQuantity,
   orderExists,
   uniqueId,
@@ -17,7 +19,7 @@ const PROMISED_DATE = '2026-12-31';
 const EARLY_DISPATCH_DATE = '2026-01-01';
 const LATE_DISPATCH_DATE = '2027-01-01'; // after PROMISED_DATE
 
-describe('POST /api/orders + GET /api/orders/:orderId', () => {
+describe('POST /api/orders + GET /api/orders/:orderId — Standard customers (unchanged from Stage 1)', () => {
   // Test case 1: eligible customer + WH-A sufficient
   it('releases the order from WH-A when WH-A alone has enough stock', async () => {
     const customerId = uniqueId('CUST-C1');
@@ -45,11 +47,11 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
       expect(response.status).toBe(200);
       expect(response.body).toEqual({
         orderId,
-        status: 'released',
+        status: 'Released',
         reason: null,
         releasedQuantity: 60,
-        backorderQuantity: 0,
-        allocation: { warehouseId: 'WH-A', allocatedQuantity: 60 },
+        backorderedQuantity: 0,
+        allocations: [{ warehouseId: 'WH-A', allocatedQuantity: 60 }],
       });
       expectConsistentQuantities(response.body, 60);
       expect(await getInventoryQuantity(productId, 'WH-A')).toBe(40);
@@ -61,8 +63,7 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
     }
   });
 
-  // Phase 13 Scenario 5: availableQuantity exactly equals the requested
-  // quantity (boundary case) with a valid dispatch date.
+  // Exact-quantity boundary: availableQuantity equals the requested quantity.
   it('releases the order when WH-A stock exactly equals the requested quantity', async () => {
     const customerId = uniqueId('CUST-S5');
     const productId = uniqueId('PROD-S5');
@@ -89,11 +90,11 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
       expect(response.status).toBe(200);
       expect(response.body).toEqual({
         orderId,
-        status: 'released',
+        status: 'Released',
         reason: null,
         releasedQuantity: 50,
-        backorderQuantity: 0,
-        allocation: { warehouseId: 'WH-A', allocatedQuantity: 50 },
+        backorderedQuantity: 0,
+        allocations: [{ warehouseId: 'WH-A', allocatedQuantity: 50 }],
       });
       expect(await getInventoryQuantity(productId, 'WH-A')).toBe(0);
     } finally {
@@ -134,8 +135,8 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
       });
 
       expect(response.status).toBe(200);
-      expect(response.body.status).toBe('released');
-      expect(response.body.allocation).toEqual({ warehouseId: 'WH-B', allocatedQuantity: 60 });
+      expect(response.body.status).toBe('Released');
+      expect(response.body.allocations).toEqual([{ warehouseId: 'WH-B', allocatedQuantity: 60 }]);
       expectConsistentQuantities(response.body, 60);
       expect(await getInventoryQuantity(productId, 'WH-A')).toBe(10); // untouched
       expect(await getInventoryQuantity(productId, 'WH-B')).toBe(40);
@@ -176,8 +177,8 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
         promisedDeliveryDate: PROMISED_DATE,
       });
 
-      expect(response.body.status).toBe('released');
-      expect(response.body.allocation.warehouseId).toBe('WH-A');
+      expect(response.body.status).toBe('Released');
+      expect(response.body.allocations).toEqual([{ warehouseId: 'WH-A', allocatedQuantity: 60 }]);
       expect(await getInventoryQuantity(productId, 'WH-B')).toBe(60); // untouched
     } finally {
       await cleanupOrder(orderId);
@@ -212,8 +213,8 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
         promisedDeliveryDate: PROMISED_DATE,
       });
 
-      expect(response.body.status).toBe('released');
-      expect(response.body.allocation.warehouseId).toBe('WH-A');
+      expect(response.body.status).toBe('Released');
+      expect(response.body.allocations).toEqual([{ warehouseId: 'WH-A', allocatedQuantity: 60 }]);
     } finally {
       await cleanupOrder(orderId);
       await cleanupInventory(productId);
@@ -221,7 +222,7 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
     }
   });
 
-  // Test case 5: no individual warehouse has enough inventory
+  // Test case 5: no individual warehouse has enough inventory — never combine for Standard
   it('blocks the order when no single warehouse has enough stock, without deducting anything', async () => {
     const customerId = uniqueId('CUST-C5');
     const productId = uniqueId('PROD-C5');
@@ -254,16 +255,17 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
       expect(response.status).toBe(200);
       expect(response.body).toEqual({
         orderId,
-        status: 'blocked',
+        status: 'Blocked',
         reason: 'insufficient inventory',
         releasedQuantity: 0,
-        backorderQuantity: 50,
-        allocation: null,
+        backorderedQuantity: 50,
+        allocations: null,
       });
       expectConsistentQuantities(response.body, 50);
       expect(await getInventoryQuantity(productId, 'WH-A')).toBe(30); // unchanged
       expect(await getInventoryQuantity(productId, 'WH-B')).toBe(30); // unchanged
       expect(await countAllocationsForOrder(orderId)).toBe(0);
+      expect(await countBackordersForOrder(orderId)).toBe(0);
     } finally {
       await cleanupOrder(orderId);
       await cleanupInventory(productId);
@@ -297,11 +299,11 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
 
       expect(response.body).toEqual({
         orderId,
-        status: 'blocked',
+        status: 'Blocked',
         reason: 'credit hold',
         releasedQuantity: 0,
-        backorderQuantity: 10,
-        allocation: null,
+        backorderedQuantity: 10,
+        allocations: null,
       });
       expect(await getInventoryQuantity(productId, 'WH-A')).toBe(100); // untouched
     } finally {
@@ -337,11 +339,11 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
 
       expect(response.body).toEqual({
         orderId,
-        status: 'blocked',
+        status: 'Blocked',
         reason: 'eligibility unknown',
         releasedQuantity: 0,
-        backorderQuantity: 10,
-        allocation: null,
+        backorderedQuantity: 10,
+        allocations: null,
       });
     } finally {
       await cleanupOrder(orderId);
@@ -366,11 +368,11 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
 
     expect(response.body).toEqual({
       orderId,
-      status: 'blocked',
+      status: 'Blocked',
       reason: 'customer not found',
       releasedQuantity: 0,
-      backorderQuantity: 10,
-      allocation: null,
+      backorderedQuantity: 10,
+      allocations: null,
     });
     // Nothing should have been persisted, since there is no valid customer to reference.
     expect(await orderExists(orderId)).toBe(false);
@@ -402,11 +404,11 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
 
       expect(response.body).toEqual({
         orderId,
-        status: 'blocked',
+        status: 'Blocked',
         reason: 'no inventory can meet promised delivery date',
         releasedQuantity: 0,
-        backorderQuantity: 10,
-        allocation: null,
+        backorderedQuantity: 10,
+        allocations: null,
       });
       expect(await getInventoryQuantity(productId, 'WH-A')).toBe(100); // untouched
       expect(await countAllocationsForOrder(orderId)).toBe(0);
@@ -445,7 +447,7 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
       const second = await request(app).post('/api/orders').send(orderPayload);
 
       expect(first.body).toEqual(second.body);
-      expect(second.body.status).toBe('released');
+      expect(second.body.status).toBe('Released');
       expect(await countAllocationsForOrder(orderId)).toBe(1);
       expect(await getInventoryQuantity(productId, 'WH-A')).toBe(60); // deducted exactly once
     } finally {
@@ -509,8 +511,8 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
     expect(response.body).toEqual({ message: 'Order not found', orderId });
   });
 
-  // GET on a blocked order includes full order details and no allocation.
-  it('returns order details with no allocation for a blocked order', async () => {
+  // GET on a blocked order includes full order details and no allocations.
+  it('returns order details with no allocations for a blocked order', async () => {
     const customerId = uniqueId('CUST-GETBLOCKED');
     const productId = uniqueId('PROD-GETBLOCKED');
     const orderId = uniqueId('ORD-GETBLOCKED');
@@ -532,11 +534,11 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
       expect(getResponse.status).toBe(200);
       expect(getResponse.body).toEqual({
         orderId,
-        status: 'blocked',
+        status: 'Blocked',
         reason: 'credit hold',
         releasedQuantity: 0,
-        backorderQuantity: 15,
-        allocation: null,
+        backorderedQuantity: 15,
+        allocations: null,
         customerId,
         customerType: 'Priority',
         productId,
@@ -545,6 +547,333 @@ describe('POST /api/orders + GET /api/orders/:orderId', () => {
       });
     } finally {
       await cleanupOrder(orderId);
+      await cleanupCustomer(customerId);
+    }
+  });
+});
+
+describe('POST /api/orders — Priority customers (Stage 2 / CHANGE1)', () => {
+  // The exact example from the CHANGE1 spec: 100 units, WH-A=40, WH-B=35,
+  // WH-C=0 -> Released 75, Backordered 25 ("Partially Released").
+  it('combines WH-A and WH-B and partially releases with a backorder for the balance (spec example)', async () => {
+    const customerId = uniqueId('CUST-P1');
+    const productId = uniqueId('PROD-P1');
+    const orderId = uniqueId('ORD-P1');
+
+    await createTestCustomer({ customerId, eligibilityStatus: 'eligible', customerType: 'Priority' });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-A',
+      availableQuantity: 40,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-B',
+      availableQuantity: 35,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+
+    try {
+      const response = await request(app).post('/api/orders').send({
+        orderId,
+        customerId,
+        customerType: 'Priority',
+        productId,
+        quantity: 100,
+        promisedDeliveryDate: PROMISED_DATE,
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        orderId,
+        status: 'Partially Released',
+        reason: null,
+        releasedQuantity: 75,
+        backorderedQuantity: 25,
+        allocations: [
+          { warehouseId: 'WH-A', allocatedQuantity: 40 },
+          { warehouseId: 'WH-B', allocatedQuantity: 35 },
+        ],
+      });
+      expectConsistentQuantities(response.body, 100);
+      expect(await getInventoryQuantity(productId, 'WH-A')).toBe(0);
+      expect(await getInventoryQuantity(productId, 'WH-B')).toBe(0);
+      expect(await countAllocationsForOrder(orderId)).toBe(2);
+
+      const backorder = await getBackorderForOrder(orderId);
+      expect(backorder).toEqual({ backorderedQuantity: 25, status: 'Open' });
+    } finally {
+      await cleanupOrder(orderId);
+      await cleanupInventory(productId);
+      await cleanupCustomer(customerId);
+    }
+  });
+
+  // Exactly the threshold (70%) qualifies for partial release.
+  it('partially releases when exactly the threshold (70%) is available', async () => {
+    const customerId = uniqueId('CUST-P2');
+    const productId = uniqueId('PROD-P2');
+    const orderId = uniqueId('ORD-P2');
+
+    await createTestCustomer({ customerId, eligibilityStatus: 'eligible', customerType: 'Priority' });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-A',
+      availableQuantity: 70,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+
+    try {
+      const response = await request(app).post('/api/orders').send({
+        orderId,
+        customerId,
+        customerType: 'Priority',
+        productId,
+        quantity: 100,
+        promisedDeliveryDate: PROMISED_DATE,
+      });
+
+      expect(response.body).toEqual({
+        orderId,
+        status: 'Partially Released',
+        reason: null,
+        releasedQuantity: 70,
+        backorderedQuantity: 30,
+        allocations: [{ warehouseId: 'WH-A', allocatedQuantity: 70 }],
+      });
+    } finally {
+      await cleanupOrder(orderId);
+      await cleanupInventory(productId);
+      await cleanupCustomer(customerId);
+    }
+  });
+
+  // Just below the threshold (69%) must block entirely, with no allocation
+  // and no backorder.
+  it('blocks with no allocation and no backorder when just below the threshold (69%)', async () => {
+    const customerId = uniqueId('CUST-P3');
+    const productId = uniqueId('PROD-P3');
+    const orderId = uniqueId('ORD-P3');
+
+    await createTestCustomer({ customerId, eligibilityStatus: 'eligible', customerType: 'Priority' });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-A',
+      availableQuantity: 69,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+
+    try {
+      const response = await request(app).post('/api/orders').send({
+        orderId,
+        customerId,
+        customerType: 'Priority',
+        productId,
+        quantity: 100,
+        promisedDeliveryDate: PROMISED_DATE,
+      });
+
+      expect(response.body).toEqual({
+        orderId,
+        status: 'Blocked',
+        reason: 'insufficient inventory',
+        releasedQuantity: 0,
+        backorderedQuantity: 100,
+        allocations: null,
+      });
+      expect(await getInventoryQuantity(productId, 'WH-A')).toBe(69); // unchanged
+      expect(await countAllocationsForOrder(orderId)).toBe(0);
+      expect(await countBackordersForOrder(orderId)).toBe(0);
+    } finally {
+      await cleanupOrder(orderId);
+      await cleanupInventory(productId);
+      await cleanupCustomer(customerId);
+    }
+  });
+
+  // Combined availability covers the full order -> Released, not Partially
+  // Released, and never allocates more than requested.
+  it('fully releases by combining warehouses when their combined stock covers the whole order', async () => {
+    const customerId = uniqueId('CUST-P4');
+    const productId = uniqueId('PROD-P4');
+    const orderId = uniqueId('ORD-P4');
+
+    await createTestCustomer({ customerId, eligibilityStatus: 'eligible', customerType: 'Priority' });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-A',
+      availableQuantity: 60,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-B',
+      availableQuantity: 50,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+
+    try {
+      const response = await request(app).post('/api/orders').send({
+        orderId,
+        customerId,
+        customerType: 'Priority',
+        productId,
+        quantity: 100,
+        promisedDeliveryDate: PROMISED_DATE,
+      });
+
+      expect(response.body).toEqual({
+        orderId,
+        status: 'Released',
+        reason: null,
+        releasedQuantity: 100,
+        backorderedQuantity: 0,
+        allocations: [
+          { warehouseId: 'WH-A', allocatedQuantity: 60 },
+          { warehouseId: 'WH-B', allocatedQuantity: 40 }, // never more than requested
+        ],
+      });
+      expect(await getInventoryQuantity(productId, 'WH-B')).toBe(10); // 50 - 40
+      expect(await countBackordersForOrder(orderId)).toBe(0);
+    } finally {
+      await cleanupOrder(orderId);
+      await cleanupInventory(productId);
+      await cleanupCustomer(customerId);
+    }
+  });
+
+  // A warehouse whose dispatch date is too late doesn't count toward
+  // "available" stock for the combine.
+  it('excludes a warehouse that cannot meet the promised delivery date from the combine', async () => {
+    const customerId = uniqueId('CUST-P5');
+    const productId = uniqueId('PROD-P5');
+    const orderId = uniqueId('ORD-P5');
+
+    await createTestCustomer({ customerId, eligibilityStatus: 'eligible', customerType: 'Priority' });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-A',
+      availableQuantity: 80,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-B',
+      availableQuantity: 100,
+      earliestDispatchDate: LATE_DISPATCH_DATE, // excluded
+    });
+
+    try {
+      const response = await request(app).post('/api/orders').send({
+        orderId,
+        customerId,
+        customerType: 'Priority',
+        productId,
+        quantity: 100,
+        promisedDeliveryDate: PROMISED_DATE,
+      });
+
+      // Only WH-A's 80 counts (80%) -> Partially Released, WH-B untouched.
+      expect(response.body).toEqual({
+        orderId,
+        status: 'Partially Released',
+        reason: null,
+        releasedQuantity: 80,
+        backorderedQuantity: 20,
+        allocations: [{ warehouseId: 'WH-A', allocatedQuantity: 80 }],
+      });
+      expect(await getInventoryQuantity(productId, 'WH-B')).toBe(100); // untouched
+    } finally {
+      await cleanupOrder(orderId);
+      await cleanupInventory(productId);
+      await cleanupCustomer(customerId);
+    }
+  });
+
+  // Duplicate orderId for a Priority partial release must not duplicate
+  // allocations or the backorder, and must not deduct inventory twice.
+  it('returns the existing result for a duplicate Priority orderId without duplicating allocations or the backorder', async () => {
+    const customerId = uniqueId('CUST-P6');
+    const productId = uniqueId('PROD-P6');
+    const orderId = uniqueId('ORD-P6');
+
+    await createTestCustomer({ customerId, eligibilityStatus: 'eligible', customerType: 'Priority' });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-A',
+      availableQuantity: 40,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-B',
+      availableQuantity: 35,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+
+    try {
+      const payload = {
+        orderId,
+        customerId,
+        customerType: 'Priority',
+        productId,
+        quantity: 100,
+        promisedDeliveryDate: PROMISED_DATE,
+      };
+
+      const first = await request(app).post('/api/orders').send(payload);
+      const second = await request(app).post('/api/orders').send(payload);
+
+      expect(first.body).toEqual(second.body);
+      expect(second.body.status).toBe('Partially Released');
+      expect(await countAllocationsForOrder(orderId)).toBe(2); // not 4
+      expect(await countBackordersForOrder(orderId)).toBe(1); // not 2
+      expect(await getInventoryQuantity(productId, 'WH-A')).toBe(0); // deducted once
+      expect(await getInventoryQuantity(productId, 'WH-B')).toBe(0); // deducted once
+    } finally {
+      await cleanupOrder(orderId);
+      await cleanupInventory(productId);
+      await cleanupCustomer(customerId);
+    }
+  });
+
+  // A Priority order fully satisfied by one warehouse still reports a
+  // single-element allocations array (never a bare "allocation" object).
+  it('reports a single-element allocations array when one warehouse alone fully covers a Priority order', async () => {
+    const customerId = uniqueId('CUST-P7');
+    const productId = uniqueId('PROD-P7');
+    const orderId = uniqueId('ORD-P7');
+
+    await createTestCustomer({ customerId, eligibilityStatus: 'eligible', customerType: 'Priority' });
+    await createTestInventory({
+      productId,
+      warehouseId: 'WH-A',
+      availableQuantity: 100,
+      earliestDispatchDate: EARLY_DISPATCH_DATE,
+    });
+
+    try {
+      const response = await request(app).post('/api/orders').send({
+        orderId,
+        customerId,
+        customerType: 'Priority',
+        productId,
+        quantity: 60,
+        promisedDeliveryDate: PROMISED_DATE,
+      });
+
+      expect(response.body).toEqual({
+        orderId,
+        status: 'Released',
+        reason: null,
+        releasedQuantity: 60,
+        backorderedQuantity: 0,
+        allocations: [{ warehouseId: 'WH-A', allocatedQuantity: 60 }],
+      });
+    } finally {
+      await cleanupOrder(orderId);
+      await cleanupInventory(productId);
       await cleanupCustomer(customerId);
     }
   });

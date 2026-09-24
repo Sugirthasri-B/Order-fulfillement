@@ -57,15 +57,21 @@ GO
 
 -- ------------------------------------------------------------
 -- OrdfulFulfilmentResults
--- One fulfilment decision per order.
+-- One fulfilment decision per order. WarehouseId is the single
+-- selected warehouse for a Standard order; it is NULL for a
+-- Priority order (which may span multiple warehouses — see
+-- OrdfulInventoryAllocations for the actual breakdown) and for a
+-- blocked order (no warehouse selected).
 -- ------------------------------------------------------------
 CREATE TABLE dbo.OrdfulFulfilmentResults
 (
-    OrderId         NVARCHAR(50)    NOT NULL,
-    Status          NVARCHAR(30)    NOT NULL,
-    WarehouseId     NVARCHAR(20)    NULL,
-    Reason          NVARCHAR(500)   NULL,
-    EvaluatedAt     DATETIME2       NOT NULL CONSTRAINT DF_OrdfulFulfilmentResults_EvaluatedAt DEFAULT (SYSUTCDATETIME()),
+    OrderId               NVARCHAR(50)    NOT NULL,
+    Status                NVARCHAR(30)    NOT NULL,
+    WarehouseId           NVARCHAR(20)    NULL,
+    Reason                NVARCHAR(500)   NULL,
+    ReleasedQuantity      INT             NOT NULL,
+    BackorderedQuantity   INT             NOT NULL,
+    EvaluatedAt           DATETIME2       NOT NULL CONSTRAINT DF_OrdfulFulfilmentResults_EvaluatedAt DEFAULT (SYSUTCDATETIME()),
     CONSTRAINT PK_OrdfulFulfilmentResults PRIMARY KEY CLUSTERED (OrderId)
 );
 GO
@@ -73,8 +79,8 @@ GO
 -- ------------------------------------------------------------
 -- OrdfulInventoryAllocations
 -- Records how much inventory (from which warehouse) was
--- allocated against an order. An order can span multiple
--- allocations when it is only partially released.
+-- allocated against an order. A Priority order that combines
+-- multiple warehouses has one row per warehouse used.
 -- ------------------------------------------------------------
 CREATE TABLE dbo.OrdfulInventoryAllocations
 (
@@ -85,5 +91,22 @@ CREATE TABLE dbo.OrdfulInventoryAllocations
     AllocatedQuantity    INT               NOT NULL,
     CreatedAt            DATETIME2         NOT NULL CONSTRAINT DF_OrdfulInventoryAllocations_CreatedAt DEFAULT (SYSUTCDATETIME()),
     CONSTRAINT PK_OrdfulInventoryAllocations PRIMARY KEY CLUSTERED (AllocationId)
+);
+GO
+
+-- ------------------------------------------------------------
+-- OrdfulBackorders
+-- One "Open" backorder record for a partially released order's
+-- unfulfilled balance (Priority customers only).
+-- ------------------------------------------------------------
+CREATE TABLE dbo.OrdfulBackorders
+(
+    BackorderId          INT IDENTITY(1,1) NOT NULL,
+    OrderId              NVARCHAR(50)       NOT NULL,
+    ProductId            NVARCHAR(50)       NOT NULL,
+    BackorderedQuantity  INT                NOT NULL,
+    Status               NVARCHAR(20)       NOT NULL,
+    CreatedAt            DATETIME2          NOT NULL CONSTRAINT DF_OrdfulBackorders_CreatedAt DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT PK_OrdfulBackorders PRIMARY KEY CLUSTERED (BackorderId)
 );
 GO

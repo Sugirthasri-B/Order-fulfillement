@@ -31,13 +31,13 @@ export const DashboardPage = () => {
   );
 
   const orderStatusCounts = useMemo(() => {
-    const released = orders.data?.filter((o) => o.status === 'released').length ?? 0;
-    const partiallyReleased = orders.data?.filter((o) => o.status === 'partially released').length ?? 0;
-    const blocked = orders.data?.filter((o) => o.status === 'blocked').length ?? 0;
+    const released = orders.data?.filter((o) => o.status === 'Released').length ?? 0;
+    const partiallyReleased = orders.data?.filter((o) => o.status === 'Partially Released').length ?? 0;
+    const blocked = orders.data?.filter((o) => o.status === 'Blocked').length ?? 0;
     return [
-      { label: 'released', value: released, color: 'var(--status-good)' },
-      { label: 'partially released', value: partiallyReleased, color: 'var(--status-warning)' },
-      { label: 'blocked', value: blocked, color: 'var(--status-critical)' },
+      { label: 'Released', value: released, color: 'var(--status-good)' },
+      { label: 'Partially Released', value: partiallyReleased, color: 'var(--status-warning)' },
+      { label: 'Blocked', value: blocked, color: 'var(--status-critical)' },
     ];
   }, [orders.data]);
 

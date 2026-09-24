@@ -51,7 +51,7 @@ GO
 
 ALTER TABLE dbo.OrdfulOrders
     ADD CONSTRAINT CK_OrdfulOrders_OrderStatus
-        CHECK (OrderStatus IN ('released', 'partially released', 'blocked'));
+        CHECK (OrderStatus IN ('Released', 'Partially Released', 'Blocked'));
 GO
 
 -- EarliestDispatchDate is NULL for a blocked order (no warehouse selected).
@@ -70,7 +70,7 @@ GO
 
 ALTER TABLE dbo.OrdfulFulfilmentResults
     ADD CONSTRAINT CK_OrdfulFulfilmentResults_Status
-        CHECK (Status IN ('released', 'partially released', 'blocked'));
+        CHECK (Status IN ('Released', 'Partially Released', 'Blocked'));
 GO
 
 ALTER TABLE dbo.OrdfulFulfilmentResults
@@ -82,9 +82,19 @@ GO
 ALTER TABLE dbo.OrdfulFulfilmentResults
     ADD CONSTRAINT CK_OrdfulFulfilmentResults_ReasonOnlyWhenBlocked
         CHECK (
-            (Status <> 'blocked' AND Reason IS NULL)
-            OR (Status = 'blocked')
+            (Status <> 'Blocked' AND Reason IS NULL)
+            OR (Status = 'Blocked')
         );
+GO
+
+ALTER TABLE dbo.OrdfulFulfilmentResults
+    ADD CONSTRAINT CK_OrdfulFulfilmentResults_ReleasedQuantity
+        CHECK (ReleasedQuantity >= 0);
+GO
+
+ALTER TABLE dbo.OrdfulFulfilmentResults
+    ADD CONSTRAINT CK_OrdfulFulfilmentResults_BackorderedQuantity
+        CHECK (BackorderedQuantity >= 0);
 GO
 
 -- ------------------------------------------------------------
@@ -117,6 +127,30 @@ ALTER TABLE dbo.OrdfulInventoryAllocations
 GO
 
 -- ------------------------------------------------------------
+-- OrdfulBackorders
+-- ------------------------------------------------------------
+ALTER TABLE dbo.OrdfulBackorders
+    ADD CONSTRAINT FK_OrdfulBackorders_OrdfulOrders
+        FOREIGN KEY (OrderId) REFERENCES dbo.OrdfulOrders (OrderId);
+GO
+
+-- At most one backorder per order.
+ALTER TABLE dbo.OrdfulBackorders
+    ADD CONSTRAINT UQ_OrdfulBackorders_OrderId
+        UNIQUE (OrderId);
+GO
+
+ALTER TABLE dbo.OrdfulBackorders
+    ADD CONSTRAINT CK_OrdfulBackorders_Status
+        CHECK (Status IN ('Open'));
+GO
+
+ALTER TABLE dbo.OrdfulBackorders
+    ADD CONSTRAINT CK_OrdfulBackorders_BackorderedQuantity
+        CHECK (BackorderedQuantity > 0);
+GO
+
+-- ------------------------------------------------------------
 -- Indexes
 -- ------------------------------------------------------------
 CREATE NONCLUSTERED INDEX IX_OrdfulOrders_CustomerId
@@ -141,4 +175,8 @@ GO
 
 CREATE NONCLUSTERED INDEX IX_OrdfulInventoryAllocations_ProductId_WarehouseId
     ON dbo.OrdfulInventoryAllocations (ProductId, WarehouseId);
+GO
+
+CREATE NONCLUSTERED INDEX IX_OrdfulBackorders_OrderId
+    ON dbo.OrdfulBackorders (OrderId);
 GO

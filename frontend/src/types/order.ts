@@ -1,7 +1,8 @@
 import { CustomerType } from './customer';
 import { WarehouseId } from './inventory';
 
-export type OrderStatus = 'released' | 'partially released' | 'blocked';
+/** Stage 2 / CHANGE1: exact literal casing required by the API contract. */
+export type OrderStatus = 'Released' | 'Partially Released' | 'Blocked';
 
 export interface CreateOrderInput {
   orderId: string;
@@ -22,8 +23,10 @@ export interface FulfilmentResult {
   status: OrderStatus;
   reason: string | null;
   releasedQuantity: number;
-  backorderQuantity: number;
-  allocation: OrderAllocation | null;
+  backorderedQuantity: number;
+  /** null when the order is blocked (no allocation at all). A Priority
+   *  order may have more than one entry when it combines warehouses. */
+  allocations: OrderAllocation[] | null;
 }
 
 /**

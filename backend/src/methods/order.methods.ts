@@ -3,7 +3,7 @@ import { executeQuery, TransactionQueryExecutor } from './db.methods';
 import { toDateOnlyString } from '../utils/dateOnly';
 import { CustomerType } from '../utils/customer.types';
 import { WarehouseId } from '../utils/inventory.types';
-import { FulfilmentResultResponse, OrderDetails, OrderStatus } from '../utils/order.types';
+import { FulfilmentResultResponse, OrderAllocation, OrderDetails, OrderStatus } from '../utils/order.types';
 
 export interface WarehouseCandidate {
   warehouseId: WarehouseId;
@@ -22,7 +22,8 @@ interface InventoryLockRow {
  * lock on each row so a concurrent transaction touching the same product
  * blocks until this one commits or rolls back. This is what prevents two
  * concurrent orders from overselling the same warehouse. Rows come back
- * ordered WH-A, WH-B, WH-C, matching the warehouse selection priority.
+ * ordered WH-A, WH-B, WH-C, matching the warehouse selection/combination
+ * priority for both Standard and Priority customers.
  */
 export const lockInventoryForProduct = async (
   exec: TransactionQueryExecutor,
@@ -69,6 +70,8 @@ export const insertOrder = async (
     productId: string;
     quantity: number;
     promisedDeliveryDate: string;
+    /** Only set for a single-warehouse release; null for a multi-warehouse
+     *  Priority release or a blocked order. */
     earliestDispatchDate: string | null;
     status: OrderStatus;
   }
@@ -98,18 +101,26 @@ export const insertFulfilmentResult = async (
   result: {
     orderId: string;
     status: OrderStatus;
+    /** Only set when exactly one warehouse was used; null for a
+     *  multi-warehouse Priority release or a blocked order. */
     warehouseId: WarehouseId | null;
     reason: string | null;
+    releasedQuantity: number;
+    backorderedQuantity: number;
   }
 ): Promise<void> => {
   await exec(
-    `INSERT INTO dbo.OrdfulFulfilmentResults (OrderId, Status, WarehouseId, Reason)
-     VALUES (@orderId, @status, @warehouseId, @reason);`,
+    `INSERT INTO dbo.OrdfulFulfilmentResults
+        (OrderId, Status, WarehouseId, Reason, ReleasedQuantity, BackorderedQuantity)
+     VALUES
+        (@orderId, @status, @warehouseId, @reason, @releasedQuantity, @backorderedQuantity);`,
     {
       orderId: { type: sql.NVarChar(50), value: result.orderId },
       status: { type: sql.NVarChar(30), value: result.status },
       warehouseId: { type: sql.NVarChar(20), value: result.warehouseId },
       reason: { type: sql.NVarChar(500), value: result.reason },
+      releasedQuantity: { type: sql.Int, value: result.releasedQuantity },
+      backorderedQuantity: { type: sql.Int, value: result.backorderedQuantity },
     }
   );
 };
@@ -135,67 +146,101 @@ export const insertInventoryAllocation = async (
   );
 };
 
-interface FulfilmentRow {
-  OrderId: string;
-  RequestedQuantity: number;
-  Status: string;
-  Reason: string | null;
-  AllocationWarehouseId: string | null;
-  AllocatedQuantity: number | null;
+/** Inserts every allocation row for an order, in the given (priority) order. */
+export const insertInventoryAllocations = async (
+  exec: TransactionQueryExecutor,
+  orderId: string,
+  productId: string,
+  allocations: OrderAllocation[]
+): Promise<void> => {
+  for (const allocation of allocations) {
+    await insertInventoryAllocation(exec, {
+      orderId,
+      productId,
+      warehouseId: allocation.warehouseId,
+      allocatedQuantity: allocation.allocatedQuantity,
+    });
+  }
+};
+
+export const insertBackorder = async (
+  exec: TransactionQueryExecutor,
+  backorder: { orderId: string; productId: string; backorderedQuantity: number }
+): Promise<void> => {
+  await exec(
+    `INSERT INTO dbo.OrdfulBackorders (OrderId, ProductId, BackorderedQuantity, Status)
+     VALUES (@orderId, @productId, @backorderedQuantity, 'Open');`,
+    {
+      orderId: { type: sql.NVarChar(50), value: backorder.orderId },
+      productId: { type: sql.NVarChar(50), value: backorder.productId },
+      backorderedQuantity: { type: sql.Int, value: backorder.backorderedQuantity },
+    }
+  );
+};
+
+interface AllocationRow {
+  WarehouseId: string;
+  AllocatedQuantity: number;
 }
 
-const mapRowToFulfilmentResult = (row: FulfilmentRow): FulfilmentResultResponse => {
-  const releasedQuantity = row.AllocatedQuantity ?? 0;
+const fetchAllocationsForOrder = async (orderId: string): Promise<OrderAllocation[]> => {
+  const rows = await executeQuery<AllocationRow>(
+    `SELECT WarehouseId, AllocatedQuantity
+     FROM dbo.OrdfulInventoryAllocations
+     WHERE OrderId = @orderId
+     ORDER BY AllocationId ASC;`,
+    { orderId: { type: sql.NVarChar(50), value: orderId } }
+  );
 
-  return {
-    orderId: row.OrderId,
-    status: row.Status as OrderStatus,
-    reason: row.Reason,
-    releasedQuantity,
-    backorderQuantity: row.RequestedQuantity - releasedQuantity,
-    allocation:
-      row.AllocationWarehouseId !== null && row.AllocatedQuantity !== null
-        ? {
-            warehouseId: row.AllocationWarehouseId as WarehouseId,
-            allocatedQuantity: row.AllocatedQuantity,
-          }
-        : null,
-  };
+  return rows.map((row) => ({
+    warehouseId: row.WarehouseId as WarehouseId,
+    allocatedQuantity: row.AllocatedQuantity,
+  }));
 };
+
+interface FulfilmentRow {
+  OrderId: string;
+  Status: string;
+  Reason: string | null;
+  ReleasedQuantity: number;
+  BackorderedQuantity: number;
+}
 
 export const findFulfilmentResultByOrderId = async (
   orderId: string
 ): Promise<FulfilmentResultResponse | null> => {
   const rows = await executeQuery<FulfilmentRow>(
-    `SELECT o.OrderId, o.Quantity AS RequestedQuantity, fr.Status, fr.Reason,
-            ia.WarehouseId AS AllocationWarehouseId, ia.AllocatedQuantity
+    `SELECT o.OrderId, fr.Status, fr.Reason, fr.ReleasedQuantity, fr.BackorderedQuantity
      FROM dbo.OrdfulOrders o
      INNER JOIN dbo.OrdfulFulfilmentResults fr ON fr.OrderId = o.OrderId
-     LEFT JOIN dbo.OrdfulInventoryAllocations ia ON ia.OrderId = o.OrderId
      WHERE o.OrderId = @orderId;`,
-    {
-      orderId: { type: sql.NVarChar(50), value: orderId },
-    }
+    { orderId: { type: sql.NVarChar(50), value: orderId } }
   );
 
-  return rows.length > 0 ? mapRowToFulfilmentResult(rows[0]) : null;
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const row = rows[0];
+  const allocations = await fetchAllocationsForOrder(orderId);
+
+  return {
+    orderId: row.OrderId,
+    status: row.Status as OrderStatus,
+    reason: row.Reason,
+    releasedQuantity: row.ReleasedQuantity,
+    backorderedQuantity: row.BackorderedQuantity,
+    allocations: allocations.length > 0 ? allocations : null,
+  };
 };
 
 interface OrderDetailsRow extends FulfilmentRow {
   CustomerId: string;
   CustomerType: string;
   ProductId: string;
+  RequestedQuantity: number;
   PromisedDeliveryDate: Date;
 }
-
-const mapRowToOrderDetails = (row: OrderDetailsRow): OrderDetails => ({
-  ...mapRowToFulfilmentResult(row),
-  customerId: row.CustomerId,
-  customerType: row.CustomerType as CustomerType,
-  productId: row.ProductId,
-  quantity: row.RequestedQuantity,
-  promisedDeliveryDate: toDateOnlyString(row.PromisedDeliveryDate),
-});
 
 /**
  * The richer read behind GET /api/orders/:orderId — includes the order's
@@ -208,17 +253,32 @@ export const findOrderDetailsByOrderId = async (orderId: string): Promise<OrderD
   const rows = await executeQuery<OrderDetailsRow>(
     `SELECT o.OrderId, o.CustomerId, c.CustomerType, o.ProductId,
             o.Quantity AS RequestedQuantity, o.PromisedDeliveryDate,
-            fr.Status, fr.Reason,
-            ia.WarehouseId AS AllocationWarehouseId, ia.AllocatedQuantity
+            fr.Status, fr.Reason, fr.ReleasedQuantity, fr.BackorderedQuantity
      FROM dbo.OrdfulOrders o
      INNER JOIN dbo.OrdfulFulfilmentResults fr ON fr.OrderId = o.OrderId
      LEFT JOIN dbo.OrdfulCustomers c ON c.CustomerId = o.CustomerId
-     LEFT JOIN dbo.OrdfulInventoryAllocations ia ON ia.OrderId = o.OrderId
      WHERE o.OrderId = @orderId;`,
-    {
-      orderId: { type: sql.NVarChar(50), value: orderId },
-    }
+    { orderId: { type: sql.NVarChar(50), value: orderId } }
   );
 
-  return rows.length > 0 ? mapRowToOrderDetails(rows[0]) : null;
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const row = rows[0];
+  const allocations = await fetchAllocationsForOrder(orderId);
+
+  return {
+    orderId: row.OrderId,
+    status: row.Status as OrderStatus,
+    reason: row.Reason,
+    releasedQuantity: row.ReleasedQuantity,
+    backorderedQuantity: row.BackorderedQuantity,
+    allocations: allocations.length > 0 ? allocations : null,
+    customerId: row.CustomerId,
+    customerType: row.CustomerType as CustomerType,
+    productId: row.ProductId,
+    quantity: row.RequestedQuantity,
+    promisedDeliveryDate: toDateOnlyString(row.PromisedDeliveryDate),
+  };
 };

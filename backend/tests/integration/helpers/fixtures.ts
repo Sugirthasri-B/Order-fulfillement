@@ -76,6 +76,28 @@ export const countAllocationsForOrder = async (orderId: string): Promise<number>
   return rows[0]?.Total ?? 0;
 };
 
+export const getBackorderForOrder = async (
+  orderId: string
+): Promise<{ backorderedQuantity: number; status: string } | null> => {
+  const rows = await executeQuery<{ BackorderedQuantity: number; Status: string }>(
+    `SELECT BackorderedQuantity, Status FROM dbo.OrdfulBackorders WHERE OrderId = @orderId;`,
+    { orderId: { type: sql.NVarChar(50), value: orderId } }
+  );
+
+  return rows.length > 0
+    ? { backorderedQuantity: rows[0].BackorderedQuantity, status: rows[0].Status }
+    : null;
+};
+
+export const countBackordersForOrder = async (orderId: string): Promise<number> => {
+  const rows = await executeQuery<{ Total: number }>(
+    `SELECT COUNT(*) AS Total FROM dbo.OrdfulBackorders WHERE OrderId = @orderId;`,
+    { orderId: { type: sql.NVarChar(50), value: orderId } }
+  );
+
+  return rows[0]?.Total ?? 0;
+};
+
 export const orderExists = async (orderId: string): Promise<boolean> => {
   const rows = await executeQuery<{ OrderId: string }>(
     `SELECT OrderId FROM dbo.OrdfulOrders WHERE OrderId = @orderId;`,
@@ -86,11 +108,15 @@ export const orderExists = async (orderId: string): Promise<boolean> => {
 };
 
 /**
- * Deletes an order and everything that references it (allocations, then
- * the fulfilment result, then the order itself), respecting foreign keys.
+ * Deletes an order and everything that references it (allocations,
+ * backorder, fulfilment result, then the order itself), respecting
+ * foreign keys.
  */
 export const cleanupOrder = async (orderId: string): Promise<void> => {
   await executeQuery(`DELETE FROM dbo.OrdfulInventoryAllocations WHERE OrderId = @orderId;`, {
+    orderId: { type: sql.NVarChar(50), value: orderId },
+  });
+  await executeQuery(`DELETE FROM dbo.OrdfulBackorders WHERE OrderId = @orderId;`, {
     orderId: { type: sql.NVarChar(50), value: orderId },
   });
   await executeQuery(`DELETE FROM dbo.OrdfulFulfilmentResults WHERE OrderId = @orderId;`, {

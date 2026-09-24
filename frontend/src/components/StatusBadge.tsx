@@ -3,9 +3,11 @@ import { classNames } from '../utils/format';
 type BadgeTone = 'good' | 'warning' | 'critical' | 'neutral';
 
 const STATUS_TONE: Record<string, BadgeTone> = {
-  released: 'good',
-  'partially released': 'warning',
-  blocked: 'critical',
+  // Order status (Stage 2 / CHANGE1 exact literal casing)
+  Released: 'good',
+  'Partially Released': 'warning',
+  Blocked: 'critical',
+  // Customer eligibility (lowercase — unaffected by CHANGE1)
   eligible: 'good',
   'credit hold': 'critical',
   unknown: 'neutral',

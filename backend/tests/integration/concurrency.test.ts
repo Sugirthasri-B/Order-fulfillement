@@ -49,13 +49,13 @@ describe('Concurrent order requests', () => {
       ]);
 
       const results = [responseA.body, responseB.body];
-      const released = results.filter((r) => r.status === 'released');
-      const blocked = results.filter((r) => r.status === 'blocked');
+      const released = results.filter((r) => r.status === 'Released');
+      const blocked = results.filter((r) => r.status === 'Blocked');
 
       expect(released).toHaveLength(1);
       expect(blocked).toHaveLength(1);
       expect(blocked[0].reason).toBe('insufficient inventory');
-      expect(blocked[0].allocation).toBeNull();
+      expect(blocked[0].allocations).toBeNull();
 
       for (const result of results) {
         expectConsistentQuantities(result, 50);
