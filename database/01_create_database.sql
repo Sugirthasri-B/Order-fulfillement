@@ -1,0 +1,19 @@
+-- ============================================================
+-- 01_create_database.sql
+-- SKIP THIS SCRIPT — the app is configured to use your existing
+-- MOBDB_DEV database, not a new "OrderFulfilmentDB".
+--
+-- Scripts 02 onward all start with "USE MOBDB_DEV;" and create the
+-- app's tables inside your existing database. Just make sure
+-- backend/.env has DB_NAME=MOBDB_DEV, then run 02_create_tables.sql
+-- next.
+--
+-- (Kept only for reference / in case you ever do want a separate
+-- database — uncomment below if so.)
+-- ============================================================
+
+-- IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = 'OrderFulfilmentDB')
+-- BEGIN
+--     CREATE DATABASE OrderFulfilmentDB;
+-- END
+-- GO

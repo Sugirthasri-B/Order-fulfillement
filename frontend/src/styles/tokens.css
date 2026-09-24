@@ -1,0 +1,82 @@
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --surface-page: #f9f9f7;
+  --surface-card: #fcfcfb;
+  --surface-sunken: #f2f1ee;
+  --surface-hover: #eeede9;
+
+  /* Ink */
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --text-on-accent: #ffffff;
+
+  /* Brand */
+  --color-accent: #2a78d6;
+  --color-accent-hover: #1c5cab;
+  --color-accent-soft: #e8f0fc;
+
+  /* Status (fixed — never themed) */
+  --status-good: #0ca30c;
+  --status-good-soft: #e4f5e4;
+  --status-warning: #b8790a;
+  --status-warning-soft: #fdf1da;
+  --status-critical: #d03b3b;
+  --status-critical-soft: #fbe8e8;
+  --status-neutral: #52514e;
+  --status-neutral-soft: #eeede9;
+
+  /* Borders */
+  --border-hairline: rgba(11, 11, 11, 0.1);
+  --border-strong: rgba(11, 11, 11, 0.18);
+  --gridline: #e1e0d9;
+
+  /* Sidebar (soft blue-tinted light, distinct from the white content cards) */
+  --sidebar-bg: #eef3fb;
+  --sidebar-bg-elevated: #f5f8fd;
+  --sidebar-hover: #e2ebf9;
+  --sidebar-text: var(--text-secondary);
+  --sidebar-text-muted: var(--text-muted);
+  --sidebar-brand-text: var(--text-primary);
+  --sidebar-active-bg: #ffffff;
+  --sidebar-active-text: var(--color-accent);
+  --sidebar-border: rgba(42, 120, 214, 0.12);
+
+  /* Spacing scale (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  /* Typography */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 26px;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px rgba(11, 11, 11, 0.06);
+  --shadow-md: 0 4px 16px rgba(11, 11, 11, 0.1);
+
+  /* Motion */
+  --transition-fast: 120ms ease;
+}
+
+/*
+ * This app always renders the light enterprise theme below, regardless of
+ * the OS/browser color-scheme setting — no automatic dark mode. This is a
+ * deliberate choice for a consistent, predictable look across machines.
+ */
