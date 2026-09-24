@@ -89,6 +89,38 @@ export const getBackorderForOrder = async (
     : null;
 };
 
+export const getFulfilmentResult = async (
+  orderId: string
+): Promise<{ status: string; releasedQuantity: number; backorderedQuantity: number } | null> => {
+  const rows = await executeQuery<{ Status: string; ReleasedQuantity: number; BackorderedQuantity: number }>(
+    `SELECT Status, ReleasedQuantity, BackorderedQuantity FROM dbo.OrdfulFulfilmentResults WHERE OrderId = @orderId;`,
+    { orderId: { type: sql.NVarChar(50), value: orderId } }
+  );
+
+  return rows.length > 0
+    ? {
+        status: rows[0].Status,
+        releasedQuantity: rows[0].ReleasedQuantity,
+        backorderedQuantity: rows[0].BackorderedQuantity,
+      }
+    : null;
+};
+
+export const getAllocationForOrderAndWarehouse = async (
+  orderId: string,
+  warehouseId: WarehouseId
+): Promise<number | null> => {
+  const rows = await executeQuery<{ AllocatedQuantity: number }>(
+    `SELECT AllocatedQuantity FROM dbo.OrdfulInventoryAllocations WHERE OrderId = @orderId AND WarehouseId = @warehouseId;`,
+    {
+      orderId: { type: sql.NVarChar(50), value: orderId },
+      warehouseId: { type: sql.NVarChar(20), value: warehouseId },
+    }
+  );
+
+  return rows.length > 0 ? rows[0].AllocatedQuantity : null;
+};
+
 export const countBackordersForOrder = async (orderId: string): Promise<number> => {
   const rows = await executeQuery<{ Total: number }>(
     `SELECT COUNT(*) AS Total FROM dbo.OrdfulBackorders WHERE OrderId = @orderId;`,

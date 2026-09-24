@@ -178,6 +178,172 @@ export const insertBackorder = async (
   );
 };
 
+export interface OpenBackorder {
+  backorderId: number;
+  orderId: string;
+  productId: string;
+  backorderedQuantity: number;
+}
+
+interface OpenBackorderRow {
+  BackorderId: number;
+  OrderId: string;
+  ProductId: string;
+  BackorderedQuantity: number;
+}
+
+/**
+ * Stage 3 / CHANGE2: the single oldest Open backorder for a product,
+ * ordered by CreatedAt with OrderId as the tie-breaker when two backorders
+ * were created at the same instant. Returns null when there is no open
+ * backorder for this product at all.
+ */
+export const findOldestOpenBackorderForProduct = async (
+  exec: TransactionQueryExecutor,
+  productId: string
+): Promise<OpenBackorder | null> => {
+  const rows = await exec<OpenBackorderRow>(
+    `SELECT TOP 1 BackorderId, OrderId, ProductId, BackorderedQuantity
+     FROM dbo.OrdfulBackorders
+     WHERE ProductId = @productId AND Status = 'Open'
+     ORDER BY CreatedAt ASC, OrderId ASC;`,
+    { productId: { type: sql.NVarChar(50), value: productId } }
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  const row = rows[0];
+  return {
+    backorderId: row.BackorderId,
+    orderId: row.OrderId,
+    productId: row.ProductId,
+    backorderedQuantity: row.BackorderedQuantity,
+  };
+};
+
+/**
+ * Stage 3 / CHANGE2: writes a backorder's new remaining quantity and status
+ * (Open, still short; Closed, fully covered) after applying newly available
+ * inventory to it.
+ */
+export const updateBackorderAfterApplication = async (
+  exec: TransactionQueryExecutor,
+  params: { backorderId: number; remainingQuantity: number; status: 'Open' | 'Closed' }
+): Promise<void> => {
+  await exec(
+    `UPDATE dbo.OrdfulBackorders
+     SET BackorderedQuantity = @remainingQuantity, Status = @status
+     WHERE BackorderId = @backorderId;`,
+    {
+      backorderId: { type: sql.Int, value: params.backorderId },
+      remainingQuantity: { type: sql.Int, value: params.remainingQuantity },
+      status: { type: sql.NVarChar(20), value: params.status },
+    }
+  );
+};
+
+/**
+ * Stage 3 / CHANGE2: adds `additionalQuantity` to an order's existing
+ * allocation for a warehouse (from its original release), or inserts a new
+ * allocation row if this order never drew from that warehouse before.
+ * Needed because OrdfulInventoryAllocations has a unique (OrderId,
+ * ProductId, WarehouseId) constraint — a backorder top-up from the same
+ * warehouse the order originally used must increment, not duplicate, that
+ * row, while a top-up from a different warehouse still gets its own row.
+ */
+export const upsertInventoryAllocation = async (
+  exec: TransactionQueryExecutor,
+  allocation: { orderId: string; productId: string; warehouseId: WarehouseId; additionalQuantity: number }
+): Promise<void> => {
+  const updatedRows = await exec<{ AllocationId: number }>(
+    `UPDATE dbo.OrdfulInventoryAllocations
+     SET AllocatedQuantity = AllocatedQuantity + @additionalQuantity
+     OUTPUT INSERTED.AllocationId
+     WHERE OrderId = @orderId AND ProductId = @productId AND WarehouseId = @warehouseId;`,
+    {
+      orderId: { type: sql.NVarChar(50), value: allocation.orderId },
+      productId: { type: sql.NVarChar(50), value: allocation.productId },
+      warehouseId: { type: sql.NVarChar(20), value: allocation.warehouseId },
+      additionalQuantity: { type: sql.Int, value: allocation.additionalQuantity },
+    }
+  );
+
+  if (updatedRows.length > 0) {
+    return;
+  }
+
+  await insertInventoryAllocation(exec, {
+    orderId: allocation.orderId,
+    productId: allocation.productId,
+    warehouseId: allocation.warehouseId,
+    allocatedQuantity: allocation.additionalQuantity,
+  });
+};
+
+/**
+ * Stage 3 / CHANGE2: increases a warehouse's on-hand inventory by the
+ * quantity Operations reported as newly available. Whatever portion isn't
+ * consumed by a backorder in the same submission is left behind as regular
+ * available stock.
+ */
+export const increaseInventoryQuantity = async (
+  exec: TransactionQueryExecutor,
+  params: { productId: string; warehouseId: WarehouseId; quantity: number }
+): Promise<void> => {
+  await exec(
+    `UPDATE dbo.OrdfulInventory
+     SET AvailableQuantity = AvailableQuantity + @quantity, UpdatedAt = SYSUTCDATETIME()
+     WHERE ProductId = @productId AND WarehouseId = @warehouseId;`,
+    {
+      productId: { type: sql.NVarChar(50), value: params.productId },
+      warehouseId: { type: sql.NVarChar(20), value: params.warehouseId },
+      quantity: { type: sql.Int, value: params.quantity },
+    }
+  );
+};
+
+/**
+ * Stage 3 / CHANGE2: rolls a backorder application's effect up onto the
+ * parent order's overall released/backordered quantities and status, on
+ * both OrdfulFulfilmentResults and OrdfulOrders (kept in sync, exactly as
+ * the original order-creation flow always writes both together).
+ */
+export const applyBackorderReleaseToOrder = async (
+  exec: TransactionQueryExecutor,
+  params: {
+    orderId: string;
+    additionalReleasedQuantity: number;
+    newBackorderedQuantity: number;
+    newStatus: OrderStatus;
+  }
+): Promise<void> => {
+  await exec(
+    `UPDATE dbo.OrdfulFulfilmentResults
+     SET ReleasedQuantity = ReleasedQuantity + @additionalReleasedQuantity,
+         BackorderedQuantity = @newBackorderedQuantity,
+         Status = @newStatus
+     WHERE OrderId = @orderId;`,
+    {
+      orderId: { type: sql.NVarChar(50), value: params.orderId },
+      additionalReleasedQuantity: { type: sql.Int, value: params.additionalReleasedQuantity },
+      newBackorderedQuantity: { type: sql.Int, value: params.newBackorderedQuantity },
+      newStatus: { type: sql.NVarChar(30), value: params.newStatus },
+    }
+  );
+
+  await exec(
+    `UPDATE dbo.OrdfulOrders
+     SET OrderStatus = @newStatus
+     WHERE OrderId = @orderId;`,
+    {
+      orderId: { type: sql.NVarChar(50), value: params.orderId },
+      newStatus: { type: sql.NVarChar(30), value: params.newStatus },
+    }
+  );
+};
+
 interface AllocationRow {
   WarehouseId: string;
   AllocatedQuantity: number;
